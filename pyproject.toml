@@ -1,0 +1,20 @@
+[project]
+authors = [{name = "tanner-ray-martin", email = "tanner.ray.martin.123@gmail.com"}]
+dependencies = ["pydantic>=2.9.2,<3", "pydantic-settings>=2.6.0,<3", "pynacl>=1.5.0,<2"]
+description = "Add a short description here"
+name = "pybites-code-clinic"
+requires-python = ">= 3.13"
+version = "0.1.0"
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[tool.pixi.project]
+channels = ["conda-forge"]
+platforms = ["win-64"]
+
+[tool.pixi.pypi-dependencies]
+pybites_code_clinic = { path = ".", editable = true }
+
+[tool.pixi.tasks]
