@@ -1,44 +1,65 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, SecretStr, computed_field, Secret, field_validator
-from nacl.signing import SigningKey, VerifyKey
+from pydantic import Field, SecretStr, field_validator
 from nacl.hash import blake2b
-from nacl.public import PrivateKey, PublicKey, Box
-from nacl.exceptions import CryptoError
+from nacl.secret import SecretBox
 
 
-def create_box(password: str) -> Box:
-    password_bytes: bytes = password.encode()
-    b2b_password: bytes = blake2b(password_bytes, digest_size=16)
-    private_key: PrivateKey = PrivateKey(b2b_password)
-    public_key: PublicKey = private_key.public_key
-    box: Box = Box(private_key, public_key)
-    return box
+def create_secret_box(password: str | SecretStr) -> SecretBox:
+    if isinstance(password, SecretStr):
+        password_hex = password.get_secret_value()
+        password_bytes = bytes.fromhex(password_hex)
+    elif isinstance(password, str):
+        password_bytes = password.encode()
+    else:
+        raise ValueError("Password must be a string or SecretStr")
+    blake_hash = blake2b(password_bytes, digest_size=16)
+    return SecretBox(blake_hash)
 
 
-def encrypt(password: str, value: str) -> str:
-    box = create_box(password)
-    return box.encrypt(value.encode()).hex()
+def decrypt_secret(secret: SecretStr, password: SecretStr) -> str:
+    secret_box = create_secret_box(password)
+    secret_hex = secret.get_secret_value()
+    secret_bytes = bytes.fromhex(secret_hex)
+    try:
+        decrypted_secret = secret_box.decrypt(secret_bytes).decode()
+        return decrypted_secret
+    except Exception:
+        return "Decryption failed"
 
 
-def decrypt(password: str, value: str) -> str:
-    box = create_box(password)
-    return box.decrypt(bytes.fromhex(value)).decode()
+def encrypt_secret(secret: str, password: str) -> SecretStr:
+    secret_box = create_secret_box(password)
+    secret_bytes = secret.encode()
+    encrypted_secret = secret_box.encrypt(secret_bytes)
+    encrypted_secret_hex = encrypted_secret.hex()
+    return SecretStr(encrypted_secret_hex)
 
 
-class Env(BaseSettings):
+class EvLoader(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env")
     name: str
     age: int
-    secret_credential: SecretStr = Field(None)
-    password: "SecretStr | None" = Field(default=None, repr=False, exclude=True)
+    secret_credential: SecretStr = Field(
+        None, repr=False
+    )  # this will not be shown when print is called
+    password: SecretStr = Field(
+        None, repr=False, exclude=True
+    )  # this will not be shown when print or dump is called
+
+    @field_validator("password", mode="before")
+    def validate_password(cls, value: str | SecretStr) -> SecretStr:
+        if isinstance(value, SecretStr):
+            return value
+        elif isinstance(value, str):
+            password_bytes = value.encode()
+            password_hex = password_bytes.hex()
+            return SecretStr(password_hex)
+        else:
+            raise ValueError("Password must be a string or SecretStr")
 
     @property
-    def credential(self) -> str:
-        secret_credential: SecretStr = self.secret_credential
-        visible_credential: str = secret_credential.get_secret_value()
-        if self.password is None:
-            return visible_credential
-        try:
-            return decrypt(self.password.get_secret_value(), visible_credential)
-        except CryptoError:
-            return "Invalid password"
+    def credential(self) -> str:  # this is visible when EvLoader.credentials is called
+        if isinstance(self.password, SecretStr):
+            return decrypt_secret(self.secret_credential, self.password)
+        else:
+            return "Password must be a SecretStr"
